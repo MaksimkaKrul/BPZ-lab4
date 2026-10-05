@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Auth0 Authentication</title>
+    <title>Auth0 SSO</title>
     <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
     <style>
         html { height: 100%; }
@@ -12,127 +12,76 @@
             display: grid; justify-items: center; align-items: center; background-color: #3a3a3a;
         }
         #main-holder {
-            width: 400px; padding: 30px; display: flex; flex-direction: column;
+            width: 450px; padding: 30px; display: flex; flex-direction: column;
             align-items: center; background-color: white; border-radius: 7px;
             box-shadow: 0px 0px 5px 2px black; box-sizing: border-box;
         }
-        #login-error-msg {
-            text-align: center; margin: 0; padding: 5px; font-size: 12px; font-weight: bold;
-            color: #8a0000; border: 1px solid #8a0000; background-color: #e58f8f; opacity: 0;
+        .btn {
+            width: 100%; padding: 15px; margin-top: 20px; border: none; border-radius: 5px;
+            color: white; font-weight: bold; background-color: #4a4a4a; cursor: pointer;
+            text-align: center; text-decoration: none; font-size: 16px;
         }
-        form { display: flex; flex-direction: column; align-items: center; width: 100%; }
-        .login-form-field {
-            border: none; border-bottom: 1px solid #3a3a3a; margin-bottom: 15px;
-            border-radius: 3px; outline: none; padding: 5px; width: 100%; box-sizing: border-box;
-        }
-        input[type="submit"] {
-            width: 100%; padding: 10px; border: none; border-radius: 5px;
-            color: white; font-weight: bold; background-color: #3a3a3a; cursor: pointer; outline: none;
+        .token-box {
+            width: 100%; height: 80px; padding: 10px; box-sizing: border-box; 
+            font-family: monospace; font-size: 10px; resize: none; 
+            background-color: #f0f0f0; border: 1px solid #ccc; border-radius: 4px;
+            word-break: break-all;
         }
     </style>
 </head>
 <body>
     <main id="main-holder">
-        <h1 id="login-header" style="margin-bottom: 5px;">Login</h1>
-        <div id="login-error-msg-holder" style="width:100%; margin-bottom:10px;">
-            <p id="login-error-msg">Invalid username and/or password</p>
-        </div>
-        <form id="login-form">
-            <input type="text" name="login" class="login-form-field" placeholder="Username (Email)">
-            <input type="password" name="password" class="login-form-field" placeholder="Password">
-            <input type="submit" value="Login" id="login-form-submit">
-        </form>
-
-        <h2 id="register-header" style="margin-top: 30px;">Register</h2>
-        <div id="register-msg-holder" style="width:100%; text-align:center; margin-bottom:10px;">
-            <p id="register-msg" style="margin:0; opacity:0; font-weight:bold; font-size:12px;"></p>
-        </div>
-        <form id="register-form">
-            <input type="text" name="login" class="login-form-field" placeholder="New Username (Email)">
-            <input type="password" name="password" class="login-form-field" placeholder="New Password">
-            <input type="submit" value="Register" id="register-form-submit">
-        </form>
+        <h1 style="margin-top: 0;">Welcome</h1>
+        <a href="/api/login" class="btn">Login with Auth0 SSO</a>
     </main>
 
     <script>
-        const session = sessionStorage.getItem('session');
-        let token;
-        let countdownInterval;
-        
-        try { token = JSON.parse(session).token; } catch(e) {}
+        const urlParams = new URLSearchParams(window.location.search);
+        const code = urlParams.get('code');
 
-        function loadDashboard() {
-            axios.get('/', { headers: { Authorization: token } }).then((response) => {
-                const data = response.data;
-                if (data.username) {
-                    const mainHolder = document.getElementById("main-holder");
-                    mainHolder.innerHTML = `
-                        <h1 style="margin-top: 0; margin-bottom: 5px; text-align: center;">Auth0 Authentication</h1>
-                        <h3 style="margin-top: 0; margin-bottom: 25px; text-align: center;">Login successful</h3>
-                        
-                        <div style="width: 100%; text-align: left; margin-bottom: 20px; font-size: 14px; line-height: 1.8;">
-                            <div><b>User:</b> ${data.username}</div>
-                            <div><b>Refresh token:</b> ${data.has_refresh_token ? 'available' : 'not available'}</div>
-                            <div><b>Remaining token lifetime:</b> <span id="lifetime-val">-</span> seconds</div>
-                            <div><b>Last refresh:</b> <span id="last-refresh-val">${data.last_refresh}</span></div>
-                            <div style="margin-top: 15px;"><b>Access Token:</b></div>
-                            <textarea readonly style="width: 100%; height: 110px; padding: 10px; box-sizing: border-box; font-family: monospace; font-size: 10px; resize: none; background-color: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; word-break: break-all;">${data.access_token}</textarea>
-                        </div>
-                        
-                        <button id="check-token-btn" style="width: 100%; padding: 12px; margin-bottom: 10px; border: none; border-radius: 5px; color: white; font-weight: bold; background-color: #4a4a4a; cursor: pointer; font-size: 14px;">Check token lifetime</button>
-                        <button id="logout-btn" style="width: 100%; padding: 12px; border: none; border-radius: 5px; color: white; font-weight: bold; background-color: #2a2a2a; cursor: pointer; font-size: 14px;">Logout</button>
-                    `;
-
-                    // "Живий" таймер
-                    if(countdownInterval) clearInterval(countdownInterval);
-                    countdownInterval = setInterval(() => {
-                        let remaining = Math.max(0, Math.floor((data.expires_at - Date.now()) / 1000));
-                        document.getElementById('lifetime-val').innerText = remaining;
-                    }, 1000);
-
-                    // Кнопки
-                    document.getElementById("check-token-btn").addEventListener("click", () => {
-                        loadDashboard(); // Відправляє запит на бекенд для перевірки/оновлення
-                    });
-
-                    document.getElementById("logout-btn").addEventListener("click", () => {
-                        sessionStorage.removeItem('session'); 
-                        location.reload();
-                    });
-                }
+        if (code) {
+            document.getElementById("main-holder").innerHTML = "<h2>Processing login...</h2>";
+            axios.post('/api/callback', { code: code }).then((response) => {
+                sessionStorage.setItem('session', JSON.stringify(response.data));
+                window.history.replaceState({}, document.title, "/");
+                location.reload();
             }).catch(() => {
-                sessionStorage.removeItem('session'); location.reload();
+                document.getElementById("main-holder").innerHTML = "<h2 style='color:red; text-align:center;'>Login Error! Check server console.</h2><a href='/' class='btn'>Try Again</a>";
             });
-        }
-
-        if (token) {
-            loadDashboard();
         } else {
-            document.getElementById("login-form-submit").addEventListener("click", (e) => {
-                e.preventDefault();
-                const form = document.getElementById("login-form");
-                axios.post('/api/login', { login: form.login.value, password: form.password.value })
-                .then((response) => {
-                    sessionStorage.setItem('session', JSON.stringify(response.data));
-                    location.reload();
-                }).catch(() => { 
-                    document.getElementById("login-error-msg").style.opacity = 1; 
-                });
-            });
+            const session = sessionStorage.getItem('session');
+            let token;
+            try { token = JSON.parse(session).token; } catch(e) {}
 
-            document.getElementById("register-form-submit").addEventListener("click", (e) => {
-                e.preventDefault();
-                const form = document.getElementById("register-form");
-                const msg = document.getElementById("register-msg");
-                axios.post('/api/register', { login: form.login.value, password: form.password.value })
-                .then(() => {
-                    msg.innerText = "Успішно зареєстровано! Тепер увійдіть.";
-                    msg.style.opacity = 1; msg.style.color = "green";
-                }).catch((err) => {
-                    msg.innerText = "Помилка: " + (err.response.data.description || err.message);
-                    msg.style.opacity = 1; msg.style.color = "red";
+            if (token) {
+                axios.get('/api/me', { headers: { Authorization: token } }).then((response) => {
+                    const data = response.data;
+                    if (data.username) {
+                        const mainHolder = document.getElementById("main-holder");
+                        mainHolder.innerHTML = `
+                            <h1 style="margin-top: 0; margin-bottom: 5px;">SSO Successful</h1>
+                            <div style="width: 100%; text-align: left; margin-top: 15px; line-height: 1.6;">
+                                <div><b>User:</b> ${data.username}</div>
+                                <div><b>Token Type:</b> ${data.token_type}</div>
+                                <div><b>Expires In:</b> ${data.expires_in} seconds</div>
+                                
+                                <div style="margin-top: 10px;"><b>ID Token:</b></div>
+                                <textarea readonly class="token-box">${data.id_token}</textarea>
+
+                                <div style="margin-top: 10px;"><b>Access Token:</b></div>
+                                <textarea readonly class="token-box">${data.access_token}</textarea>
+                            </div>
+                            <button id="logout-btn" class="btn">Logout</button>
+                        `;
+                        document.getElementById("logout-btn").addEventListener("click", () => {
+                            sessionStorage.removeItem('session'); 
+                            location.href = '/logout';
+                        });
+                    }
+                }).catch(() => {
+                    sessionStorage.removeItem('session');
                 });
-            });
+            }
         }
     </script>
 </body>

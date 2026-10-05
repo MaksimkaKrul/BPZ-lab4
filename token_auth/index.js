@@ -16,10 +16,10 @@ app.use(bodyParser.urlencoded({ extended: true }));
 const AUTH0_DOMAIN = 'maksim-im34-kpi-oauth2-lab2.eu.auth0.com'; 
 const AUTH0_CLIENT_ID = 'egtDufBQZ6PTpmDh4u4m61ZFpUIJt6Mb'; 
 const AUTH0_CLIENT_SECRET = 'yPCYAhgu2VpCOMcs7_MaLlBaWGkHK5xKzvQmDhOQSaMiLRmNLLnT63lxEqoVhzsp'; 
+const REDIRECT_URI = 'http://localhost:3000';
 
 const SESSION_KEY = 'Authorization';
 const JWT_SECRET = 'my_super_secret_key';
-
 const ENCRYPTION_KEY = '12345678901234567890123456789012';
 const IV_LENGTH = 16;
 
@@ -40,14 +40,6 @@ function decryptPayload(text) {
     decrypted = Buffer.concat([decrypted, decipher.final()]);
     return decrypted.toString();
 }
-
-let auth0PublicKey = '';
-axios.get(`https://${AUTH0_DOMAIN}/pem`)
-    .then(response => {
-        auth0PublicKey = response.data;
-        console.log("[Lab 5] Публічний ключ Auth0 успішно завантажено!");
-    })
-    .catch(err => console.error("Помилка завантаження ключа:", err.message));
 
 class Session {
     #sessions = {}
@@ -75,9 +67,7 @@ app.use(async (req, res, next) => {
         try {
             const decoded = jwt.verify(token, JWT_SECRET);
             sessionId = decryptPayload(decoded.encryptedData); 
-        } catch (err) {
-            console.error("Помилка розшифрування токена:", err.message);
-        }
+        } catch (err) {}
     }
 
     if (sessionId) {
@@ -93,29 +83,6 @@ app.use(async (req, res, next) => {
     req.session = currentSession;
     req.sessionId = sessionId;
 
-    if (req.session.username && req.session.auth0_refresh_token && req.session.expires_at) {
-        const timeLeft = req.session.expires_at - Date.now();
-        
-        if (timeLeft < 300000) { 
-            console.log(`[Auth0] Токен закінчується. Оновлюємо через Refresh Token...`);
-            try {
-                const refreshResponse = await axios.post(`https://${AUTH0_DOMAIN}/oauth/token`, {
-                    grant_type: 'refresh_token',
-                    client_id: AUTH0_CLIENT_ID,
-                    client_secret: AUTH0_CLIENT_SECRET,
-                    refresh_token: req.session.auth0_refresh_token
-                });
-                
-                req.session.auth0_access_token = refreshResponse.data.access_token;
-                req.session.expires_at = Date.now() + (refreshResponse.data.expires_in * 1000);
-                req.session.last_refresh = new Date().toLocaleTimeString(); 
-                console.log("[Auth0] Токен успішно оновлено!");
-            } catch (error) {
-                console.error("[Auth0] Помилка оновлення токена:", error.response ? error.response.data : error.message);
-            }
-        }
-    }
-
     onFinished(req, () => {
         sessions.set(req.sessionId, req.session);
     });
@@ -124,77 +91,73 @@ app.use(async (req, res, next) => {
 });
 
 app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname+'/index.html'));
+});
+
+app.get('/api/me', (req, res) => {
     if (req.session.username) {
         return res.json({ 
             username: req.session.username,
             access_token: req.session.auth0_access_token,
-            has_refresh_token: !!req.session.auth0_refresh_token,
-            expires_at: req.session.expires_at,
-            last_refresh: req.session.last_refresh || 'not checked'
+            id_token: req.session.auth0_id_token,
+            expires_in: req.session.auth0_expires_in,
+            token_type: req.session.auth0_token_type
         });
     }
-    res.sendFile(path.join(__dirname+'/index.html'));
-})
+    res.status(401).send();
+});
 
 app.get('/logout', (req, res) => {
     sessions.destroy(req, res);
     res.redirect('/');
 });
 
-app.post('/api/login', async (req, res) => {
-    const { login, password } = req.body;
+app.get('/api/login', (req, res) => {
+    const scope = encodeURIComponent('openid profile email');
+    const auth0Url = `https://${AUTH0_DOMAIN}/authorize?client_id=${AUTH0_CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code&scope=${scope}`;
+    res.redirect(auth0Url);
+});
+
+app.post('/api/callback', async (req, res) => {
+    const { code } = req.body;
     try {
-        const response = await axios.post(`https://${AUTH0_DOMAIN}/oauth/token`, {
-            grant_type: 'password',
-            client_id: AUTH0_CLIENT_ID,
-            client_secret: AUTH0_CLIENT_SECRET,
-            username: login,
-            password: password,
-            scope: 'openid profile email offline_access'
+        const params = new URLSearchParams();
+        params.append('grant_type', 'authorization_code');
+        params.append('client_id', AUTH0_CLIENT_ID);
+        params.append('client_secret', AUTH0_CLIENT_SECRET);
+        params.append('code', code);
+        params.append('redirect_uri', REDIRECT_URI);
+
+        const response = await axios.post(`https://${AUTH0_DOMAIN}/oauth/token`, params, {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
         });
 
         const auth0Data = response.data;
+        let username = 'Auth0 User';
 
-        try {
-            const decodedAuth0Token = jwt.verify(auth0Data.id_token, auth0PublicKey, { algorithms: ['RS256'] });
-            console.log(`[Lab 5] Підпис токена успішно ПЕРЕВІРЕНО! Користувач: ${decodedAuth0Token.email}`);
-        } catch (verifyError) {
-            console.error("[Lab 5] ПОМИЛКА: Недійсний підпис токена!", verifyError.message);
-            return res.status(401).json({ message: "Invalid Auth0 Token Signature" });
+        if (auth0Data.id_token) {
+            const decodedIdToken = jwt.decode(auth0Data.id_token);
+            if (decodedIdToken) {
+                username = decodedIdToken.email || decodedIdToken.name || 'Auth0 User';
+            }
         }
 
-        req.session.username = login;
+        req.session.username = username;
         req.session.auth0_access_token = auth0Data.access_token;
-        req.session.auth0_refresh_token = auth0Data.refresh_token;
-        req.session.expires_at = Date.now() + (auth0Data.expires_in * 1000); 
-        req.session.last_refresh = 'not checked';
+        req.session.auth0_id_token = auth0Data.id_token;
+        req.session.auth0_expires_in = auth0Data.expires_in;
+        req.session.auth0_token_type = auth0Data.token_type;
 
         const encryptedSession = encryptPayload(req.sessionId);
         const token = jwt.sign({ encryptedData: encryptedSession }, JWT_SECRET);
         
         return res.json({ token: token });
     } catch (error) {
-        console.error("Помилка Auth0:", error.response ? error.response.data : error.message);
+        console.error(error.response ? error.response.data : error.message);
         res.status(401).send();
     }
 });
 
-app.post('/api/register', async (req, res) => {
-    const { login, password } = req.body;
-    try {
-        await axios.post(`https://${AUTH0_DOMAIN}/dbconnections/signup`, {
-            client_id: AUTH0_CLIENT_ID,
-            email: login,
-            password: password,
-            connection: 'Username-Password-Authentication'
-        });
-        res.json({ message: "Успішно зареєстровано!" });
-    } catch (error) {
-        console.error("Помилка реєстрації:", error.response ? error.response.data : error.message);
-        res.status(400).json(error.response ? error.response.data : { message: "Помилка" });
-    }
-});
-
 app.listen(port, () => {
-    console.log(`Example app listening on port ${port}`)
+    console.log(`Example app listening on port ${port}`);
 });
